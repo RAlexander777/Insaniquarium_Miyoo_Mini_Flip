@@ -41,3 +41,8 @@ insaniquarium-port/
 shim-src/
 SPIRV-Cross/
 
+# Release archives
+*.zip
+
+
+

@@ -1,0 +1,63 @@
+# Miyoo Mini cross-compilation image.
+#
+# Two toolchains live side by side:
+#   - Debian bookworm's arm-linux-gnueabihf gcc 12  -> the C++20 compiler
+#   - the Miyoo buildroot sysroot (glibc 2.28)      -> the target headers/libs
+# They are mixed the same way insaniquarium-port's toolchain file does it:
+# -nostdinc, then the compiler's own C++ headers, then the Miyoo sysroot.
+FROM debian:bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc-arm-linux-gnueabihf \
+        g++-arm-linux-gnueabihf \
+        binutils-arm-linux-gnueabihf \
+        make \
+        ninja-build \
+        pkg-config \
+        file \
+        python3 \
+        python-is-python3 \
+        curl \
+        ca-certificates \
+        xz-utils \
+        git \
+    && rm -rf /var/lib/apt/lists/*
+
+# The project requires CMake >= 3.26; bookworm ships 3.25.
+RUN curl -fsSL -o /tmp/cmake.tar.gz \
+        https://github.com/Kitware/CMake/releases/download/v3.30.5/cmake-3.30.5-linux-x86_64.tar.gz \
+    && mkdir -p /opt/cmake \
+    && tar -xf /tmp/cmake.tar.gz -C /opt/cmake --strip-components=1 \
+    && rm /tmp/cmake.tar.gz
+ENV PATH=/opt/cmake/bin:$PATH
+
+# Extracted inside Linux on purpose: the toolchain carries symlinks (usr -> .,
+# arm-linux-gnueabihf/sysroot, the .so chain) that Windows tooling cannot create.
+COPY miyoomini-toolchain.tar.xz /tmp/
+RUN tar -xf /tmp/miyoomini-toolchain.tar.xz -C /opt \
+    && rm /tmp/miyoomini-toolchain.tar.xz
+
+# glibc 2.30 introduced pthread_{mutex,cond,rwlock}_clock*. Debian's libstdc++
+# was generated against a much newer glibc, so its bits/c++config.h defines the
+# macros that make <mutex> and <bits/std_mutex.h> call those functions, and
+# against the Miyoo's 2.28 headers they do not exist:
+#   error: 'pthread_cond_clockwait' was not declared in this scope
+#
+# Turning the macros off selects libstdc++'s pre-2.30 fallbacks
+# (pthread_mutex_timedlock / pthread_cond_timedwait), which 2.28 does have.
+# This is the wall insaniquarium-port's toolchain file documents for glibc <
+# 2.30; there it is sidestepped by targeting bullseye, which is not an option
+# here if the binary is to run on the Miyoo.
+RUN CFG=/usr/arm-linux-gnueabihf/include/c++/12/arm-linux-gnueabihf/bits/c++config.h \
+    && sed -i \
+        -e 's|^#define _GLIBCXX_USE_PTHREAD_COND_CLOCKWAIT 1|/* #undef _GLIBCXX_USE_PTHREAD_COND_CLOCKWAIT */|' \
+        -e 's|^#define _GLIBCXX_USE_PTHREAD_MUTEX_CLOCKLOCK 1|/* #undef _GLIBCXX_USE_PTHREAD_MUTEX_CLOCKLOCK */|' \
+        -e 's|^#define _GLIBCXX_USE_PTHREAD_RWLOCK_CLOCKLOCK 1|/* #undef _GLIBCXX_USE_PTHREAD_RWLOCK_CLOCKLOCK */|' \
+        "$CFG" \
+    && echo "--- clock macros now ---" && grep -n "CLOCKWAIT\|CLOCKLOCK" "$CFG"
+
+ENV MIYOO_TOOLCHAIN=/opt/miyoomini-toolchain
+ENV MIYOO_SYSROOT=/opt/miyoomini-toolchain/arm-linux-gnueabihf/libc
+
+WORKDIR /work
+CMD ["/bin/bash"]

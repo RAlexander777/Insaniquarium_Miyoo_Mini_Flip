@@ -1,0 +1,43 @@
+# OS & Editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.bak
+*~
+.vscode/
+.idea/
+
+# Large toolchains & sysroot archives (download separately)
+miyoomini-toolchain.tar.xz
+union-miyoomini-toolchain/
+alsa-dev/
+alsa-conf/
+
+# Device dumps, audio dumps & temporary test scripts
+fallout*
+love-*
+gptokeyb*
+*.raw
+*.bin
+*.au
+*.ogg
+*.log
+device-*.txt
+balatro*
+Balatro*
+launch_standalone.sh
+stop_audioserver.sh
+libpadsp.so
+
+# Intermediate build outputs
+out/
+build/
+*.o
+*.obj
+*.a
+
+# Local submodule and upstream build trees (managed via patches)
+insaniquarium-port/
+shim-src/
+SPIRV-Cross/
+

@@ -1,0 +1,453 @@
+diff --git a/PopLib/appbase.cpp b/PopLib/appbase.cpp
+index 6f97f23..e4c7cf4 100644
+--- a/PopLib/appbase.cpp
++++ b/PopLib/appbase.cpp
+@@ -143,6 +143,20 @@ AppBase::AppBase()
+ 	mErrorHandler = nullptr;
+ 	mIGUIManager = nullptr;
+ 	mFrameTime = 10;
++	// The engine's simulation step, in milliseconds. This implies 100 steps per
++	// second, which this device cannot do; and each step only advances the game's
++	// clock by this much, so whatever the CPU falls short by is time the game
++	// loses. Music and effects follow that clock, which is why they come out
++	// stretched -- slow in tempo, right in pitch, and unmoved by any audio
++	// setting. A larger step makes each update cover more of the clock, so the
++	// game can keep real time with fewer updates. Overridable so the launcher can
++	// tune it to what the device actually manages.
++	if (const char *aEnvFrameTime = SDL_getenv("POPLIB_FRAME_TIME"))
++	{
++		int aValue = SDL_atoi(aEnvFrameTime);
++		if (aValue > 0 && aValue <= 200)
++			mFrameTime = aValue;
++	}
+ 	mNonDrawCount = 0;
+ 	mDrawCount = 0;
+ 	mSleepCount = 0;
+@@ -156,6 +170,27 @@ AppBase::AppBase()
+ 	mLastDrawWasEmpty = false;
+ 	mLastTimeCheck = 0;
+ 	mUpdateMultiplier = 1;
++	// Scales the frame time above (aFrameFTime = mFrameTime / mUpdateMultiplier),
++	// so values below 1 give each update a longer slice of the game's clock. This
++	// is a fraction, not a count: F10+Ctrl toggles it to 0.25 in debug builds.
++	if (const char *aEnvMultiplier = SDL_getenv("POPLIB_UPDATE_MULTIPLIER"))
++	{
++		double aValue = SDL_atof(aEnvMultiplier);
++		if (aValue > 0.0 && aValue <= 4.0)
++			mUpdateMultiplier = aValue;
++	}
++	// How many extra updates one pass of the loop may run to make up for a draw
++	// rate below the engine's 100 Hz. The world advances one step per update, so
++	// this is what lets it keep real time on a device that draws slower than that;
++	// the ceiling keeps a very slow frame from spending all of itself simulating
++	// and none drawing. Overridable so the launcher can tune it without a rebuild.
++	mMaxCatchUpUpdates = 9;
++	if (const char *aEnvCatchUp = SDL_getenv("POPLIB_CATCHUP_MAX"))
++	{
++		int aValue = SDL_atoi(aEnvCatchUp);
++		if (aValue > 0 && aValue <= 32)
++			mMaxCatchUpUpdates = aValue;
++	}
+ 	mPaused = false;
+ 	mFastForwardToUpdateNum = 0;
+ 	mFastForwardToMarker = false;
+@@ -2897,6 +2932,23 @@ bool AppBase::Process(bool allowSleep)
+ 			if (mRelaxUpdateBacklogCount > 0)
+ 				mUpdateFTimeAcc = 0;
+ 
++			// A host that cannot run the main loop once per mFrameTime would
++			// otherwise advance the whole game world in lockstep with the draw
++			// rate.  Spend the time actually lost instead of dropping it, so
++			// that animations, timers and logic keep running at their intended
++			// speed.  The count is capped (POPLIB_CATCHUP_MAX) so that a very
++			// slow frame still has to draw; the accumulator itself is already
++			// clamped in UpdateFTimeAcc().
++			for (int aCatchUp = 0; (aCatchUp < mMaxCatchUpUpdates) && (mUpdateFTimeAcc >= aFrameFTime); ++aCatchUp)
++			{
++				if (!DoUpdateFrames())
++					break;
++
++				ProcessSafeDeleteList();
++				mUpdateFTimeAcc -= aFrameFTime;
++				++mNonDrawCount;
++			}
++
+ 			didUpdate = true;
+ 		}
+ 
+@@ -2909,21 +2961,31 @@ bool AppBase::Process(bool allowSleep)
+ 			if (mHasPendingDraw)
+ 			{
+ 				DrawDirtyStuff();
++				if (allowSleep)
++				{
++					int aTimeToNextFrame = (int)(aFrameFTime - mUpdateFTimeAcc);
++					if (aTimeToNextFrame > 2)
++					{
++						++mSleepCount;
++						SDL_Delay(aTimeToNextFrame - 1);
++						aCumSleepTime += (aTimeToNextFrame - 1);
++					}
++				}
+ 			}
+ 			else
+ 			{
+ 				// Let us take into account the time it took to draw dirty stuff
+ 				int aTimeToNextFrame = (int)(aFrameFTime - mUpdateFTimeAcc);
+-				if (aTimeToNextFrame > 0)
++				if (aTimeToNextFrame > 2)
+ 				{
+ 					if (!allowSleep)
+ 						return false;
+ 
+ 					// Wait till next processing cycle
+ 					++mSleepCount;
+-					SDL_Delay(aTimeToNextFrame);
++					SDL_Delay(aTimeToNextFrame - 1);
+ 
+-					aCumSleepTime += aTimeToNextFrame;
++					aCumSleepTime += (aTimeToNextFrame - 1);
+ 				}
+ 			}
+ 		}
+@@ -3101,6 +3163,10 @@ void AppBase::Start()
+ 
+ 	SDL_RaiseWindow(mSDLInterface->mWindow);
+ 
++	// Printed so a log always says which binary and which tuning actually ran.
++	SDL_Log("engine: frame time = %dms, update multiplier = %g, catch-up max = %d\r\n",
++			mFrameTime, mUpdateMultiplier, mMaxCatchUpUpdates);
++
+ 	int aCount = 0;
+ 	int aSleepCount = 0;
+ 
+diff --git a/PopLib/appbase.hpp b/PopLib/appbase.hpp
+index 6a9c8ca..a53e733 100644
+--- a/PopLib/appbase.hpp
++++ b/PopLib/appbase.hpp
+@@ -288,6 +288,8 @@ class AppBase : public ButtonListener, public DialogListener
+ 
+ 	/// @brief TBA
+ 	int mNonDrawCount;
++	/// @brief most extra updates one pass of the loop may run to keep real time
++	int mMaxCatchUpUpdates;
+ 	/// @brief current frame time
+ 	int mFrameTime;
+ 
+diff --git a/PopLib/audio/openalsoundmanager.cpp b/PopLib/audio/openalsoundmanager.cpp
+index 87cde0e..c4f10d8 100644
+--- a/PopLib/audio/openalsoundmanager.cpp
++++ b/PopLib/audio/openalsoundmanager.cpp
+@@ -34,6 +34,24 @@ ALCcontext *mALContext = NULL;
+ 
+ OpenALSoundManager::OpenALSoundManager()
+ {
++	// These have to be valid before any early return. FindFreeChannel()
++	// dereferences mPlayingSounds[] and the destructor deletes what it finds,
++	// so returning with the arrays uninitialised turns "no audio device" into a
++	// segfault instead of a silent game.
++	int i;
++
++	for (i = 0; i < MAX_SOURCE_SOUNDS; i++)
++	{
++		mSourceSounds[i] = NULL;
++		mBaseVolumes[i] = 1;
++		mBasePans[i] = 0;
++	}
++
++	for (i = 0; i < MAX_CHANNELS; i++)
++		mPlayingSounds[i] = NULL;
++
++	mMasterVolume = 1.0;
++
+ 	mALDeviceD = NULL;
+ 	mALDevice = alcOpenDevice(NULL); // Default device
+ 	if (!mALDevice)
+@@ -53,20 +71,6 @@ OpenALSoundManager::OpenALSoundManager()
+ 	}
+ 
+ 	alcMakeContextCurrent(mALContext);
+-
+-	int i;
+-
+-	for (i = 0; i < MAX_SOURCE_SOUNDS; i++)
+-	{
+-		mSourceSounds[i] = NULL;
+-		mBaseVolumes[i] = 1;
+-		mBasePans[i] = 0;
+-	}
+-
+-	for (i = 0; i < MAX_CHANNELS; i++)
+-		mPlayingSounds[i] = NULL;
+-
+-	mMasterVolume = 1.0;
+ }
+ 
+ OpenALSoundManager::~OpenALSoundManager()
+diff --git a/PopLib/audio/openmptmusicinterface.cpp b/PopLib/audio/openmptmusicinterface.cpp
+index d08cf1f..f5401d0 100644
+--- a/PopLib/audio/openmptmusicinterface.cpp
++++ b/PopLib/audio/openmptmusicinterface.cpp
+@@ -17,13 +17,14 @@ namespace
+ // the main thread, so when the frame rate drops -- a loading screen runs at a
+ // third of the CPU on purpose -- the refill arrives late and the audio breaks
+ // up. With twice the slack the game can go over a second without servicing it.
+-const int kSampleRate = 44100;
+-const int kFramesPerBuffer = 8192;
++// 48000 stereo matching the device DAC / alsoft frequency.
++const int kSampleRate = 48000;
++const int kFramesPerBuffer = 4096;
+ const int kNumBuffers = OpenMptMusicInfo::kNumBuffers;
+ } // namespace
+ 
+ OpenMptMusicInfo::OpenMptMusicInfo()
+-	: mModule(nullptr), mSource(0), mVolume(0.0), mVolumeAdd(0.0), mVolumeCap(1.0), mStopOnFade(false),
++	: mModule(nullptr), mSource(0), mBuffersQueued(0), mVolume(0.0), mVolumeAdd(0.0), mVolumeCap(1.0), mStopOnFade(false),
+ 	  mPlaying(false), mPaused(false)
+ {
+ 	for (int i = 0; i < kNumBuffers; i++)
+@@ -71,6 +72,9 @@ bool OpenMptMusicInterface::LoadMusic(int theSongId, const std::string &theFileN
+ 		return false;
+ 	}
+ 
++	// Use linear interpolation (2) on Cortex-A7 for fast synthesis without audio stalls
++	openmpt_module_set_render_param(aModule, OPENMPT_MODULE_RENDER_INTERPOLATIONFILTER_LENGTH, 2);
++
+ 	UnloadMusic(theSongId);
+ 
+ 	OpenMptMusicInfo anInfo;
+@@ -115,7 +119,9 @@ void OpenMptMusicInterface::StartStream(OpenMptMusicInfo &theInfo, int theOffset
+ 	alGenBuffers(kNumBuffers, theInfo.mBuffers);
+ 
+ 	int aQueued = 0;
+-	for (int i = 0; i < kNumBuffers; i++)
++	// Preload only 2 buffers (~170 ms) so the stream starts instantaneously (<20 ms) without freezing the game!
++	int aToPreload = std::min(2, kNumBuffers);
++	for (int i = 0; i < aToPreload; i++)
+ 	{
+ 		if (!FillBuffer(theInfo, theInfo.mBuffers[i]))
+ 			break;
+@@ -129,6 +135,8 @@ void OpenMptMusicInterface::StartStream(OpenMptMusicInfo &theInfo, int theOffset
+ 		return;
+ 	}
+ 
++	theInfo.mBuffersQueued = aQueued;
++
+ 	ApplyVolume(theInfo);
+ 	alSourcePlay(theInfo.mSource);
+ 
+@@ -138,6 +146,7 @@ void OpenMptMusicInterface::StartStream(OpenMptMusicInfo &theInfo, int theOffset
+ 
+ void OpenMptMusicInterface::ReleaseStream(OpenMptMusicInfo &theInfo)
+ {
++	theInfo.mBuffersQueued = 0;
+ 	if (theInfo.mSource != 0)
+ 	{
+ 		alSourceStop(theInfo.mSource);
+@@ -373,6 +382,16 @@ void OpenMptMusicInterface::Update()
+ 				alSourceQueueBuffers(anInfo.mSource, 1, &aBuffer);
+ 		}
+ 
++		// Progressively queue remaining initial buffers (at most 1 per update frame)
++		if (anInfo.mBuffersQueued < kNumBuffers)
++		{
++			if (FillBuffer(anInfo, anInfo.mBuffers[anInfo.mBuffersQueued]))
++			{
++				alSourceQueueBuffers(anInfo.mSource, 1, &anInfo.mBuffers[anInfo.mBuffersQueued]);
++				anInfo.mBuffersQueued++;
++			}
++		}
++
+ 		// If it ran dry before we got here, OpenAL stopped the source by itself.
+ 		// Now that the queue is refilled it has to be restarted, or the music
+ 		// stops and never comes back.
+diff --git a/PopLib/audio/openmptmusicinterface.hpp b/PopLib/audio/openmptmusicinterface.hpp
+index d8be0df..e20a574 100644
+--- a/PopLib/audio/openmptmusicinterface.hpp
++++ b/PopLib/audio/openmptmusicinterface.hpp
+@@ -23,11 +23,12 @@ class OpenMptMusicInfo
+ 	/// How many buffers are queued at a time. Declared here rather than in the
+ 	/// .cpp so the array size comes from the same constant; keeping the two
+ 	/// apart invites an out-of-bounds write when only one is changed.
+-	static const int kNumBuffers = 8;
++	static const int kNumBuffers = 4;
+ 
+ 	/// Only exist while playing. 0 means none.
+ 	ALuint mSource;
+ 	ALuint mBuffers[kNumBuffers];
++	int mBuffersQueued;
+ 
+ 	/// Same volume model as the BASS implementation: mVolume moves by mVolumeAdd
+ 	/// each frame until it reaches mVolumeCap or zero.
+diff --git a/PopLib/graphics/sdlinterface.cpp b/PopLib/graphics/sdlinterface.cpp
+index e294f8d..2698bea 100644
+--- a/PopLib/graphics/sdlinterface.cpp
++++ b/PopLib/graphics/sdlinterface.cpp
+@@ -390,7 +390,7 @@ bool SDLInterface::Redraw(Rect *theClipRect)
+ 	SetTarget(nullptr);
+ 
+ 	SDL_SetRenderDrawColor(mRenderer, 0, 0, 0, 0);
+-	SDL_SetTextureBlendMode(mScreenTexture, SDL_BLENDMODE_BLEND);
++	SDL_SetTextureBlendMode(mScreenTexture, SDL_BLENDMODE_NONE);
+ 	SDL_RenderClear(mRenderer);
+ 
+ 	SDL_Rect clipRect =
+@@ -753,6 +753,7 @@ SDLTextureData::SDLTextureData(SDL_Renderer *theRenderer)
+ 	mBitsChangedCount = 0;
+ 	mRenderer = theRenderer;
+ 	mTexture = nullptr;
++	mTextureMirrored = nullptr;
+ }
+ 
+ SDLTextureData::~SDLTextureData()
+@@ -763,7 +764,15 @@ SDLTextureData::~SDLTextureData()
+ void SDLTextureData::ReleaseTextures()
+ {
+ 	if (mTexture != nullptr)
++	{
+ 		SDL_DestroyTexture(mTexture);
++		mTexture = nullptr;
++	}
++	if (mTextureMirrored != nullptr)
++	{
++		SDL_DestroyTexture(mTextureMirrored);
++		mTextureMirrored = nullptr;
++	}
+ }
+ 
+ void SDLTextureData::CreateTextures(MemoryImage *theImage)
+@@ -812,6 +821,12 @@ void SDLTextureData::CreateTextures(MemoryImage *theImage)
+ 	}
+ 	else if (mBitsChangedCount != theImage->mBitsChangedCount)
+ 	{
++		if (mTextureMirrored != nullptr)
++		{
++			SDL_DestroyTexture(mTextureMirrored);
++			mTextureMirrored = nullptr;
++		}
++
+ 		void *bits = theImage->GetBits();
+ 		if (bits)
+ 		{
+@@ -828,6 +843,42 @@ void SDLTextureData::CreateTextures(MemoryImage *theImage)
+ 	mBitsChangedCount = theImage->mBitsChangedCount;
+ }
+ 
++SDL_Texture *SDLTextureData::GetMirroredTexture(MemoryImage *theImage)
++{
++	CheckCreateTextures(theImage);
++	if (mTextureMirrored != nullptr)
++		return mTextureMirrored;
++
++	int aWidth = theImage->GetWidth();
++	int aHeight = theImage->GetHeight();
++	ulong *bits = theImage->GetBits();
++	if (!bits || aWidth <= 0 || aHeight <= 0)
++		return mTexture;
++
++	ulong *mirroredBits = new ulong[aWidth * aHeight];
++	for (int y = 0; y < aHeight; ++y)
++	{
++		const ulong *srcRow = bits + y * aWidth;
++		ulong *dstRow = mirroredBits + y * aWidth;
++		for (int x = 0; x < aWidth; ++x)
++		{
++			dstRow[x] = srcRow[aWidth - 1 - x];
++		}
++	}
++
++	mTextureMirrored = SDL_CreateTexture(mRenderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC, aWidth, aHeight);
++	if (mTextureMirrored)
++	{
++		const char *rendererName = SDL_GetRendererName(mRenderer);
++		SDL_SetTextureScaleMode(mTextureMirrored, (rendererName && strcmp(rendererName, "software") == 0)
++													  ? SDL_SCALEMODE_NEAREST
++													  : SDL_SCALEMODE_LINEAR);
++		SDL_UpdateTexture(mTextureMirrored, nullptr, mirroredBits, aWidth * SDL_BYTESPERPIXEL(SDL_PIXELFORMAT_ARGB8888));
++	}
++	delete[] mirroredBits;
++	return mTextureMirrored ? mTextureMirrored : mTexture;
++}
++
+ void SDLTextureData::CheckCreateTextures(MemoryImage *theImage)
+ {
+ 	if (mTexture != nullptr)
+@@ -918,19 +969,19 @@ void SDLInterface::BltMirror(Image *theImage, float theX, float theY, const Rect
+ 		return;
+ 
+ 	SDLTextureData *aData = (SDLTextureData *)aSrcMemoryImage->mD3DData;
++	SDL_Texture *aTexture = aData->GetMirroredTexture(aSrcMemoryImage);
+ 
+ 	SetTarget(mScreenTexture);
+ 
+-	SDL_Texture *aTexture = aData->mTexture;
+ 	SDL_SetTextureColorMod(aTexture, theColor.GetRed(), theColor.GetGreen(), theColor.GetBlue());
+ 	SDL_SetTextureAlphaMod(aTexture, theColor.GetAlpha());
+-
+-	SDL_FRect destRect = {(float)theX, (float)theY, (float)theSrcRect.mWidth, (float)theSrcRect.mHeight};
+-	SDL_FRect srcRect = {(float)theSrcRect.mX, (float)theSrcRect.mY, (float)theSrcRect.mWidth, (float)theSrcRect.mHeight};
+-
+ 	SDL_SetTextureBlendMode(aTexture, ChooseBlendMode(theDrawMode));
+ 
+-	SDL_RenderTextureRotated(mRenderer, aTexture, &srcRect, &destRect, 0, nullptr, SDL_FLIP_HORIZONTAL);
++	float mirroredSrcX = (float)(aSrcMemoryImage->mWidth - theSrcRect.mX - theSrcRect.mWidth);
++	SDL_FRect srcRect = {mirroredSrcX, (float)theSrcRect.mY, (float)theSrcRect.mWidth, (float)theSrcRect.mHeight};
++	SDL_FRect destRect = {theX, theY, (float)theSrcRect.mWidth, (float)theSrcRect.mHeight};
++
++	SDL_RenderTexture(mRenderer, aTexture, &srcRect, &destRect);
+ }
+ 
+ void SDLInterface::StretchBlt(Image *theImage, const Rect &theDestRect, const Rect &theSrcRect, const Rect *theClipRect,
+@@ -941,7 +992,7 @@ void SDLInterface::StretchBlt(Image *theImage, const Rect &theDestRect, const Re
+ 		return;
+ 
+ 	SDLTextureData *aData = static_cast<SDLTextureData *>(aSrcMemoryImage->mD3DData);
+-	SDL_Texture *aTexture = aData->mTexture;
++	SDL_Texture *aTexture = mirror ? aData->GetMirroredTexture(aSrcMemoryImage) : aData->mTexture;
+ 
+ 	SetTarget(mScreenTexture);
+ 	SDL_SetTextureColorMod(aTexture, theColor.GetRed(), theColor.GetGreen(), theColor.GetBlue());
+@@ -958,12 +1009,19 @@ void SDLInterface::StretchBlt(Image *theImage, const Rect &theDestRect, const Re
+ 		SDL_SetRenderClipRect(mRenderer, &clipRect);
+ 	}
+ 
+-	SDL_FRect srcRect = {(float)theSrcRect.mX, (float)theSrcRect.mY, (float)theSrcRect.mWidth,
+-						 (float)theSrcRect.mHeight};
++	SDL_FRect srcRect;
++	if (mirror)
++	{
++		float mirroredSrcX = (float)(aSrcMemoryImage->mWidth - theSrcRect.mX - theSrcRect.mWidth);
++		srcRect = {mirroredSrcX, (float)theSrcRect.mY, (float)theSrcRect.mWidth, (float)theSrcRect.mHeight};
++	}
++	else
++	{
++		srcRect = {(float)theSrcRect.mX, (float)theSrcRect.mY, (float)theSrcRect.mWidth, (float)theSrcRect.mHeight};
++	}
+ 
+ 	SDL_SetTextureBlendMode(aTexture, ChooseBlendMode(theDrawMode));
+-	SDL_RenderTextureRotated(mRenderer, aTexture, &srcRect, &destRect, 0.0, nullptr,
+-							 mirror ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
++	SDL_RenderTexture(mRenderer, aTexture, &srcRect, &destRect);
+ 	SDL_SetRenderClipRect(mRenderer, nullptr);
+ }
+ 
+diff --git a/PopLib/graphics/sdlinterface.hpp b/PopLib/graphics/sdlinterface.hpp
+index e928ab4..d50500a 100644
+--- a/PopLib/graphics/sdlinterface.hpp
++++ b/PopLib/graphics/sdlinterface.hpp
+@@ -40,6 +40,7 @@ struct SDLTextureData
+ {
+   public:
+ 	SDL_Texture *mTexture;
++	SDL_Texture *mTextureMirrored;
+ 	int mWidth;
+ 	int mHeight;
+ 	int mBitsChangedCount;
+@@ -52,6 +53,7 @@ struct SDLTextureData
+ 
+ 	void CreateTextures(MemoryImage *theImage);
+ 	void CheckCreateTextures(MemoryImage *theImage);
++	SDL_Texture *GetMirroredTexture(MemoryImage *theImage);
+ 
+ 	int GetMemSize();
+ };

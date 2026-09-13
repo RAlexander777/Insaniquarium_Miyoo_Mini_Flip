@@ -1,0 +1,12 @@
+#!/bin/sh
+GameName="Insaniquarium"
+GameDir="Insaniquarium"
+GameExecutable="script.sh"
+# The launcher checks for this file before starting, so it has to exist; the
+# real game data is checked inside script.sh.
+GameDataFile="script.sh"
+# Keep Onion's audioserver running to manage /dev/dsp at 48000 Hz
+KillAudioserver=0
+PerformanceMode=1
+Arguments=""
+/mnt/SDCARD/Emu/PORTS/launch_standalone.sh "$GameName" "$GameDir" "$GameExecutable" "$Arguments" "$GameDataFile" "$KillAudioserver" "$PerformanceMode"

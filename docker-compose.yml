@@ -1,0 +1,9 @@
+services:
+  builder:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.miyoo
+    volumes:
+      - .:/host
+    working_dir: /host
+    command: ["./build-armhf.sh"]

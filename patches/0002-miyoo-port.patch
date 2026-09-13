@@ -1,0 +1,59 @@
+diff --git a/port/CMakeLists.txt b/port/CMakeLists.txt
+index 9652c46..948f7d9 100644
+--- a/port/CMakeLists.txt
++++ b/port/CMakeLists.txt
+@@ -102,8 +102,10 @@ if(CMAKE_CROSSCOMPILING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+ 	# reports "DSO missing from command line" naming a library that was on the
+ 	# command line. Re-enabled straight after so nothing else gains needless
+ 	# dependencies.
++	# Same --as-needed trap as libpthread below, with libdl: miniaudio and SDL
++	# call dlopen, and the linker drops libdl when it is seen before them.
+ 	target_link_libraries(${GAME_TARGET} PRIVATE
+-		"-Wl,--no-as-needed" "-lpthread" "-Wl,--as-needed")
++		"-Wl,--no-as-needed" "-lpthread" "-ldl" "-Wl,--as-needed")
+ endif()
+ 
+ if(NOT ANDROID)
+diff --git a/port/verify-assets.py b/port/verify-assets.py
+index 38535d1..2e07c24 100644
+--- a/port/verify-assets.py
++++ b/port/verify-assets.py
+@@ -28,6 +28,20 @@ import pathlib
+ BIN = pathlib.Path(__file__).resolve().parent / "bin"
+ FIX_CASE = False
+ 
++
++def rename_case(d, old, new):
++    """Rename que funciona aunque el filesystem sea case-insensitive.
++
++    La tarjeta de la Miyoo es FAT32, asi que el sistema de archivos compara
++    los nombres sin distinguir mayusculas: un rename de un solo paso que solo
++    cambia la capitalizacion se acepta y despues la entrada de directorio
++    conserva la capitalizacion vieja. Pasar por un nombre temporal fuerza a que
++    se escriba la nueva.
++    """
++    tmp = d / (old + ".tmpcase")
++    (d / old).rename(tmp)
++    tmp.rename(d / new)
++
+ # extensions the loader tries when the path carries none
+ EXTS = {
+     "Image": ["gif", "jpg", "jpeg", "png", "tga"],
+@@ -142,7 +156,7 @@ def main():
+         for ref, want, real, kind in mismatched:
+             d = (BIN / ref).parent
+             try:
+-                (d / real).rename(d / want)
++                rename_case(d, real, want)
+                 fixed += 1
+             except OSError as e:
+                 print(f"    no pude renombrar {real} -> {want}: {e}")
+@@ -169,7 +183,7 @@ def main():
+                 actual = entries.get(old_pat)
+                 if actual and actual != new_name:
+                     try:
+-                        (d / actual).rename(d / new_name)
++                        rename_case(d, actual, new_name)
+                         companions += 1
+                     except OSError:
+                         pass

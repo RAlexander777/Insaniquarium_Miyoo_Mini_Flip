@@ -5,7 +5,7 @@
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Platform](https://img.shields.io/badge/Platform-Miyoo%20Mini%20%2F%20Flip%20(OnionOS)-red.svg)]()
 
-A native ARMv7 (`armhf`) port of **Insaniquarium Deluxe** running on the **Miyoo Mini Flip** (and likely compatible with the **Miyoo Mini / Miyoo Mini Plus**) under OnionOS.
+A native ARMv7 (`armhf`) port of **Insaniquarium Deluxe** running on the **Miyoo Mini Flip** (and likely compatible with the **Miyoo Mini / Miyoo Mini Plus**) under [OnionOS](https://github.com/onionui/Onion).
 
 This port is built upon the decompilation work by [WinFish](https://github.com/vindirect/winfish), the [PopLib](https://github.com/teampopwork/poplib) engine framework, and the PortMaster port created by [SaMeiers](https://github.com/SaMeiers/insaniquarium-port).
 
@@ -142,7 +142,7 @@ The compiled binary `Insaniquarium` will be output to the build directory ready 
 - **[PopLib](https://github.com/teampopwork/poplib) by Team Popwork**: For the cross-platform modern engine rewrite replacing PopCap's SexyAppFramework.
 - **[SaMeiers](https://github.com/SaMeiers/insaniquarium-port)**: For the initial PortMaster port, build system, and fixups that made this handheld port possible.
 - **[bmdhacks](https://github.com/bmdhacks/SDL)**: For the SDL3-via-SDL2 shim backend.
-- **OnionOS Team & Miyoo Community**: For the ongoing software ecosystem.
+- **[OnionOS Team & Miyoo Community](https://github.com/onionui/Onion)**: For the ongoing software ecosystem.
 
 ---
 

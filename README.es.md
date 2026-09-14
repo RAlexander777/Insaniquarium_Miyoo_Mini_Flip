@@ -59,6 +59,7 @@ sounds/
 | **D-Pad / Stick Analógico** | Mover el mouse |
 | **A** | Clic izquierdo |
 | **B** | Clic derecho |
+| **Y** | Auto-recolectar todas las monedas |
 | **L1 / L2** | Acelerar el puntero |
 | **R1 / R2** | Ralentizar el puntero |
 | **Start** | Pausar el juego (Barra espaciadora) |

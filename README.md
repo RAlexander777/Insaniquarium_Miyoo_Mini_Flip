@@ -13,7 +13,7 @@ This port is built upon the decompilation work by [WinFish](https://github.com/v
 
 ## Compatibility
 
-- **Miyoo Mini Flip**: Fully tested and verified on physical hardware running **OnionOS (latest beta release)** (stable performance, audio in sync, normal thermals, minimal battery drain).
+- **Miyoo Mini Flip**: Fully tested and verified on physical hardware running **OnionOS v4.4.0-beta-20260120** (stable performance, audio in sync, normal thermals, minimal battery drain).
 - **Miyoo Mini / Miyoo Mini Plus**: Built against the standard Miyoo Mini toolchain (`glibc 2.28`, ARMv7 Cortex-A7). While untried by the author due to lacking the hardware, it shares the same SoC/OS architecture and is expected to work. Feedback and PRs are welcome!
 
 ---
@@ -43,7 +43,7 @@ sounds/
 
 ## Installation on Miyoo Mini / Flip
 
-1. Ensure your Miyoo device is running **OnionOS** (tested and verified on the latest beta).
+1. Ensure your Miyoo device is running **OnionOS** (tested and verified on **v4.4.0-beta-20260120**).
 2. Place `Insaniquarium.port` into your SD card under:
    ```text
    /mnt/SDCARD/Roms/PORTS/

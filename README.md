@@ -43,7 +43,7 @@ sounds/
 
 ## Installation on Miyoo Mini / Flip
 
-1. Extract the release `.zip` archive directly into the root of your SD card (it automatically places all required files into `Roms/PORTS/`).
+1. Extract the release `.zip` archive directly into your `Roms/PORTS/` directory on your SD card (it will place `Insaniquarium.port` and the `Games/Insaniquarium/` folder).
 2. Copy the original game asset folders (`data/`, `fishsongs/`, `images/`, `music/`, `properties/`, `sounds/`) into:
    ```text
    /mnt/SDCARD/Roms/PORTS/Games/Insaniquarium/

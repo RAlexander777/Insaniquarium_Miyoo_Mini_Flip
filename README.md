@@ -59,7 +59,7 @@ sounds/
 | **D-Pad / Analog Stick** | Move mouse pointer |
 | **A** | Left Click |
 | **B** | Right Click |
-| **Y** | Auto-collect all coins on screen |
+| **X** | Auto-collect all coins on screen |
 | **L1 / L2** | Speed up pointer |
 | **R1 / R2** | Slow down pointer |
 | **Start** | Pause game (Spacebar) |
